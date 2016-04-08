@@ -66,13 +66,14 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
     %
     %                           Christian Kothe, Swartz Center for Computational Neuroscience, UCSD
     %                           2010-04-29
-
+    
     methods
-      
+        
         function defaults = preprocessing_defaults(self)
+            
             defaults = {'FIRFilter',{'Frequencies',[6 7 33 34],'Type','minimum-phase'}, 'EpochExtraction',[0.5 3.5], 'Resampling',100};
         end
-                
+        
         function model = feature_adapt(self,varargin)
             args = arg_define(varargin, ...
                 arg_norep('signal'), ...
@@ -81,8 +82,11 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                 arg({'qp','ParameterQ'},1,[0 4],'Regularization parameter q''. Can be searched over 0:0.5:4.','cat','Feature Extraction','guru',true), ...
                 arg({'prior','SpectralPrior'},'@(f) f>=7 & f<=30',[],'Prior frequency weighting function.','cat','Feature Extraction', 'type','expression'), ...
                 arg({'steps','MaxIterations'},3,uint32([1 3 10 50]),'Number of iterations. A step is spatial optimization, followed by spectral optimization.','cat','Feature Extraction'));
-        
+            
+            
             [signal,n_of,pp,qp,prior,steps] = deal(args.signal,args.patterns,args.pp,args.qp,args.prior,args.steps);
+            
+            
             if signal.nbchan == 1
                 error('Spec-CSP does intrinsically not support single-channel data (it is a spatial filter).'); end
             if signal.nbchan < args.patterns
@@ -92,44 +96,153 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
             % read a few parameters from the options (and re-parameterize the hyper-parameters p' and q' into p and q)
             p = pp+qp;
             q = qp;
-            if isnumeric(prior) && length(prior) == 2
-                prior = @(f) f >= prior(1) & f <= prior(2); end
+            Fs = signal.srate;
+            nfft = 2^(nextpow2(signal.pnts));           
+            [freqs,findx] = getfgrid(Fs,nfft,[7 30]);            
+            allfreqs = 0:Fs/nfft:Fs;
+            allfreqs = allfreqs(1:nfft);
+            
+            SpectrumCalcAlgo = 'RegFFT'; %'RegFFT', 'Multitaper', 'Welch'
+            
             % number of C=Channels, S=Samples and T=Trials #ok<NASGU>
             [C,S,dum] = size(signal.data); %#ok<NASGU>
-            % build a frequency table (one per DFT bin)
-            freqs = (0:S-1)*signal.srate/S;
-            % evaluate the prior I
-            I = prior(freqs);
-            % and find table indices that are supported by the prior
-            bands = find(I);
+            
+            if strcmp(SpectrumCalcAlgo,'Multitaper')
+                seq_length = S;
+                time_halfbandwidth = 2.5;
+                num_seq = 4;
+                [dps_seq] = dpss(seq_length,time_halfbandwidth,num_seq);
+            elseif strcmp(SpectrumCalcAlgo,'Welch')
+                seglen = 100;
+                overlap = 40;
+                win = hamming(seglen);
+                nwin = fix((S-overlap)/(seglen-overlap));
+            end
+            
             
             % preprocessing
             for c=1:2
                 % compute the per-class epoched data X and its Fourier transform (along time), Xfft
                 X{c} = exp_eval_optimized(set_picktrials(signal,'rank',c));
                 [C,S,T] = size(X{c}.data);
-                Xfft{c} = fft(X{c}.data,[],2);
-                % the full spectrum F of covariance matrices per every DFT bin and trial of the data
-                F{c} = single(zeros(C,C,max(bands),T));
-                for k=bands
-                    for t=1:T
-                        F{c}(:,:,k,t) = 2*real(Xfft{c}(:,k,t)*Xfft{c}(:,k,t)'); end
+                F{c} = zeros(length(freqs),C,C,T);
+                
+                
+                if strcmp(SpectrumCalcAlgo,'RegFFT')
+                    Xfft = fft(X{c}.data,nfft,2); %  Xfft->C,nfft,T
+                    Xfft_crop = Xfft(:,findx,:);% Xfft_crop ->C,Freqs,T
+                    F{c} = 2*real(bsxfun(@times, conj(permute(Xfft_crop,[1 4 2 3])), permute(Xfft_crop, [4 1 2 3]))); %F{c} -> C,C,freqs,T
+                    
+                    %                     spec_f_mine = (1/(S*2*pi))*(abs(Xfft_crop)).^2;
+                    %                     spec_f_mine = squeeze(mean(spec_f_mine, 3));
+                    %                     figure();
+                    %                     plot(spec_f_mine');
+                    %
+                    %                     spec_f_temp = zeros(C,nfft,T);
+                    %                     for cc=1:C
+                    %
+                    %                         spec_f_temp(cc,:,:) = periodogram(squeeze(X{c}.data(cc,:,:)),[],nfft,'twosided');
+                    %                     end
+                    %                     spec_f = spec_f_temp(:,findx,:);
+                    %                     spec_f = squeeze(mean(spec_f, 3));
+                    %                     figure();
+                    %                     plot(spec_f');
+                    %
+                    
+                    
+                    
+                elseif strcmp(SpectrumCalcAlgo,'Multitaper')
+                    
+                    
+                    Xdata_win = bsxfun(@times,X{c}.data, reshape(dps_seq, 1, [], 1, size(dps_seq, 2))); % data_win -> C,S,T,num_seq
+                    Xfft = fft(Xdata_win,nfft,2);   % Xfft->C,nfft,T,num_seq
+                    Xfft_crop = Xfft(:,findx,:,:);  % Xfft_crop->C,freqs,T,num_seq
+                    F{c} = 2* real(squeeze(sum(bsxfun(@times, conj(permute(Xfft_crop,[1,5,2,3,4])), permute(Xfft_crop, [5,1,2,3,4])), 5))./num_seq); % F{c}->C,C,freqs,T
+                    
+                    %save('/Users/Neda.Qusp/Qusp/Projects/SpatialFiltering/SourceCode/TestBuffer/mtm.mat','dps_seq','Xdata_win','Xfft','Xfft_crop')
+                    %                     spec_mt_temp = zeros(C,nfft,T);
+                    %                     for cc=1:C
+                    %                         spec_mt_temp(cc,:,:) = pmtm(squeeze(X{c}.data(cc,:,:)),2.5,nfft,'twosided');
+                    %                     end
+                    %                     spec_mt = spec_mt_temp(:,findx,:);
+                    %                     spec_mt = squeeze(mean(spec_mt, 3));
+                    %                     figure();
+                    %                     plot(spec_mt');
+                    %
+                    %                     spec_mt_mine = (1/(2*pi*num_seq))*sum((abs(Xfft_crop)).^2,4);
+                    %                     spec_mt_mine = squeeze(mean(squeeze(spec_mt_mine), 3));
+                    %                     figure();
+                    %                     plot(spec_mt_mine');
+                    
+                    
+                elseif strcmp(SpectrumCalcAlgo,'Welch')
+                    
+                    signal_idx = bsxfun(@plus,[1:seglen]',[0:nwin-1]*(seglen-overlap));
+                    Xdata_seg = repmat(X{c}.data,1,1,1,nwin);  %Xdata_seg -> C,S,T,nwin
+                    Xdata_seg2 = permute(Xdata_seg,[1 3 2  4]); %Xdata_seg2 ->C,T,S,nwin
+                    Xdata_seg3 = reshape(Xdata_seg2(:,:,signal_idx),C,T,[],nwin); % Xdata_seg3 -> C,T,seglen,nwin
+                    Xdata_win = bsxfun(@times,Xdata_seg3,reshape(win,1,1,seglen,1)); % Xdata_win -> C,T,seglen,nwin
+                    Xfft = fft(Xdata_win,nfft,3); % Xfft -> C,T,nfft,nwin
+                    Xfft_crop =Xfft(:,:,findx,:); % Xfft_crop->C,T,freqs,num_seq
+                    F{c} = 2  * real(squeeze(sum(bsxfun(@times,conj(permute(Xfft_crop,[1,5,3,2,4])),permute(Xfft_crop,[5,1,3,2,4])),5))./nwin); % F{c}-> C,C,freqs,T
+                    
+                    %                     spec_w_temp = zeros(C,nfft,T);
+                    %                     for cc=1:C
+                    %                         spec_w_temp(cc,:,:) = pwelch(squeeze(X{c}.data(cc,:,:)),seglen,overlap,nfft,'twosided');
+                    %                     end
+                    %                     spec_w = spec_w_temp(:,findx,:);
+                    %                     spec_w = squeeze(mean(spec_w, 3));
+                    %                     figure();
+                    %                     plot(spec_w');
+                    %
+                    %                     spec_w_mine = (1/(S*nwin))*sum((abs(Xfft_crop)).^2,4);
+                    %                     spec_w_mine = squeeze(mean(permute(squeeze(spec_w_mine),[1,3,2]), 3));
+                    %                     figure();
+                    %                     plot(spec_w_mine');
+                    %
+                    
                 end
+                
                 % compute the cross-spectrum V as an average over trials
                 V{c} = mean(F{c},4);
+                
             end
             
+%             fpath = '/Users/Neda.Qusp/Qusp/Projects/SpatialFiltering/SourceCode/TestBuffer/';
+%             if strcmp(SpectrumCalcAlgo,'RegFFT')
+%                 fpath = strcat(fpath,'RegFFT/');
+%             elseif strcmp(SpectrumCalcAlgo,'Multitaper')
+%                 fpath = strcat(fpath,'Multitaper/');
+%             elseif strcmp(SpectrumCalcAlgo,'Welch')
+%                 fpath = strcat(fpath,'Welch/');
+%             end
+%                         
+%             fname1 = strcat(fpath,'input.mat');
+%             fname2 = strcat(fpath,'output1.mat');
+%             X02save = X{1}.data;
+%             X12save = X{2}.data;
+%             save(fname1,'X02save','X12save');
+%             F02save = F{1};
+%             F12save = F{2};
+%             V02save = V{1};
+%             V12save = V{2};
+%             save(fname2,'F02save','F12save','V02save','V12save');
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            nF = length(freqs);
+            
             % 1. initialize the filter set alpha and the number of filters J
-            J = 1; alpha{J}(bands) = 1;
+            J = 1; alpha{J}(1:nF) = 1;
             % 2. for each step
+            
             for step=1:steps
                 % 3. for each set of spectral coefficients alpha{j} (j=1,...,J)
                 for j=1:J
                     % 4. calculate sensor covariance matrices for each class from alpha{j}
                     for c = 1:2
                         Sigma{c} = zeros(C);
-                        for b=bands
-                            Sigma{c} = Sigma{c} + alpha{j}(b)*V{c}(:,:,b); end
+                        for b=1:nF
+                            Sigma{c} = Sigma{c} + alpha{j}(b)*V{c}(:,:,b);
+                        end
                     end
                     % 5. solve the generalized eigenvalue problem Eq. (2)
                     [VV,DD] = eig(Sigma{1},Sigma{1}+Sigma{2});
@@ -139,32 +252,38 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                     % as well as the top eigenvalue for each class
                     lambda(j,:) = [DD(1), DD(end)];
                 end
+                
+                
                 % 7. set W{c} from all W{j}{c} such that lambda(j,c) is minimal/maximal over j
                 W = {W{argmin(lambda(:,1))}{1}, W{argmax(lambda(:,2))}{2}};
                 P = {P{argmin(lambda(:,1))}{1}, P{argmax(lambda(:,2))}{2}};
                 % 8. for each projection w in the concatenated [W{1},W{2}]...
                 Wcat = [W{1} W{2}]; J = 2*n_of;
                 Pcat = [P{1} P{2}];
+                
                 for j=1:J
                     w = Wcat(:,j);
                     % 9. calcualate (across trials within each class) mean and variance of the w-projected cross-spectrum components
                     for c=1:2
                         % part of Eq. (3)
-                        s{c} = zeros(size(F{c},4),max(bands));
-                        for k=bands
+                        s{c} = zeros(size(F{c},4),nF);
+                        for k=1:nF
                             for t = 1:size(s{c},1)
-                                s{c}(t,k) = w'*F{c}(:,:,k,t)*w; end
+                                s{c}(t,k) = w'*F{c}(:,:,k,t)*w;
+                            end
                         end
                         mu_s{c} = mean(s{c});
                         var_s{c} = var(s{c});
                     end
                     % 10. update alpha{j} according to Eqs. (4) and (5)
                     for c=1:2
-                        for k=bands
+                        for k=1:nF
                             % Eq. (4)
                             alpha_opt{c}(k) = max(0, (mu_s{c}(k)-mu_s{3-c}(k)) / (var_s{1}(k) + var_s{2}(k)) );
+                            
                             % Eq. (5), with prior from Eq. (6)
-                            alpha_tmp{c}(k) = alpha_opt{c}(k).^q * (I(k) * (mu_s{1}(k) + mu_s{2}(k))/2).^p;
+                            alpha_tmp{c}(k) = alpha_opt{c}(k).^q * ((mu_s{1}(k) + mu_s{2}(k))/2).^p;
+                            
                         end
                     end
                     % ... as the maximum for both classes
@@ -173,14 +292,28 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                     alpha{j} = alpha{j} / sum(alpha{j});
                 end
             end
-            alpha = [vertcat(alpha{:})'; zeros(S-length(alpha{1}),length(alpha))];
-            model = struct('W',{Wcat},'P',{Pcat},'alpha',{alpha},'freqs',{freqs},'bands',{bands},'chanlocs',{signal.chanlocs});            
+            
+            alphacat = zeros(nfft,J);
+            alphacat(findx,:)= vertcat(alpha{:})';
+            model = struct('W',{Wcat},'P',{Pcat},'alpha',{alphacat},'freqs',{allfreqs},'bands',{findx},'chanlocs',{signal.chanlocs});
+            
+            %fname3 = strcat(fpath,'output2.mat');
+            %save(fname3,'Wcat','alphacat');
         end
         
         function features = feature_extract(self,signal,featuremodel)
+            
             features = zeros(size(signal.data,3),size(featuremodel.W,2));
+            nfft = 2^(nextpow2(signal.pnts));
             for t=1:size(signal.data,3)
-                features(t,:) = log(var(2*real(ifft(featuremodel.alpha.*fft(signal.data(:,:,t)'*featuremodel.W))))); end                
+                temp = signal.data(:,:,t)'*featuremodel.W;
+                temp = fft(temp,nfft);
+                temp = featuremodel.alpha.* temp;
+                temp = 2*real(ifft(temp));
+                temp = var(temp);
+                temp = log(temp);
+                features(t,:) = temp;
+            end
         end
         
         function visualize_model(self,varargin) %#ok<*INUSD>
@@ -192,7 +325,7 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                 arg({'paper','PaperFigure'},false,[],'Use paper-style font sizes. Whether to generate a plot with font sizes etc. adjusted for paper.'), ...
                 arg_nogui({'nosedir_override','NoseDirectionOverride'},'',{'','+X','+Y','-X','-Y'},'Override nose direction.'));
             arg_toworkspace(args);
-
+            
             % no parent: create new figure
             if isempty(myparent)
                 myparent = figure('Name','Common Spatial Patterns'); end
@@ -204,7 +337,7 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                 nosedir = '+X';
             end
             if ~isempty(nosedir_override)
-                nosedir = nosedir_override; end            
+                nosedir = nosedir_override; end
             % number of pairs, and index of pattern per subplot
             np = size(featuremodel.W,2)/2; idxp = [1:np np+(2*np:-1:np+1)]; idxf = [np+(1:np) 2*np+(2*np:-1:np+1)];
             % for each CSP pattern...
@@ -229,7 +362,7 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                     set([gca,t,l1,l2],'FontSize',0.2);
                     set(pl,'LineWidth',2);
                 end
-            end    
+            end
             try set(gcf,'Color',[1 1 1]); end
         end
         
@@ -242,7 +375,7 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
         
         function tf = needs_voting(self)
             tf = true;
-        end        
+        end
         
     end
 end

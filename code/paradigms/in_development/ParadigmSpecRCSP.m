@@ -205,7 +205,7 @@ classdef ParadigmSpecRCSP < ParadigmDataflowSimplified
                         end
                         if args.robust_spectrum
                             mu_s{c} = median(s{c});
-                            var_s{c} = median(abs(bsxfun(@minus,s{c},mu_s{c})))*1.4826;
+                            var_s{c} = median(abs(bsxfun(@minus,s{c},mu_s{c})))*1.4826; % TODO: square!
                         else
                             mu_s{c} = mean(s{c});
                             var_s{c} = var(s{c});

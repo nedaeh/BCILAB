@@ -1,5 +1,5 @@
 classdef ParadigmCSP < ParadigmDataflowSimplified
-    % Common Spatial Pattern(s) algorithm. 
+    % Common Spatial Pattern(s) algorithm.
     %
     % The CSP paradigm is based on the design of the Berlin Brain-Computer Interface (BBCI) [1], more
     % comprehensively described in [2], which is mainly controlled by (sensori-)motor imagery. The
@@ -114,12 +114,12 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
     
     
     methods
-      
+        
         function defaults = preprocessing_defaults(self)
             % define the default pre-processing parameters of this paradigm
             defaults = {'FIRFilter',{'Frequencies',[6 8 28 32],'Type','minimum-phase'}, 'EpochExtraction',[0.5 3.5], 'Resampling',100};
         end
-                
+        
         function model = feature_adapt(self,varargin)
             % adapt a feature representation using the CSP algorithm
             arg_define(varargin, ...
@@ -135,6 +135,10 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
                 if shrinkage_cov
                     covar{k} = hlp_diskcache('featuremodels',@cov_shrink,reshape(trials{k}.data,size(trials{k}.data,1),[])');
                 else
+                    %                     Xc = reshape(trials{k}.data,size(trials{k}.data,1),[])';
+                    %                     [r,c] = size(Xc);
+                    %                     covar{k} = Xc' * Xc /(r-1);
+                    %                     cc = covar{k};
                     covar{k} = cov(reshape(trials{k}.data,size(trials{k}.data,1),[])');
                 end
                 covar{k}(~isfinite(covar{k})) = 0;
@@ -146,6 +150,7 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
             model.cov = cov(signal.data(:,:)');
             model.chanlocs = signal.chanlocs;
             model.logtransform = dologtransform;
+            
         end
         
         function features = feature_extract(self,signal,featuremodel)
@@ -175,10 +180,10 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
                 nosedir = '+X';
             end
             if ~isempty(nosedir_override)
-                nosedir = nosedir_override; end            
+                nosedir = nosedir_override; end
             % number of pairs, and index of pattern per subplot
-            np = size(featuremodel.patterns,1)/2; 
-            idx = [1:np 2*np:-1:np+1];            
+            np = size(featuremodel.patterns,1)/2;
+            idx = [1:np 2*np:-1:np+1];
             % for each CSP pattern...
             for p=1:np*2
                 subplot(2,np,p,'Parent',myparent);
@@ -191,13 +196,13 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
                 t = title(['CSP Pattern ' num2str(idx(p))]);
                 if args.paper
                     set(t,'FontUnits','normalized');
-                    set(t,'FontSize',0.1);                    
+                    set(t,'FontSize',0.1);
                 end
             end
         end
         
         function layout = dialog_layout_defaults(self)
-            % define the default configuration dialog layout 
+            % define the default configuration dialog layout
             layout = {'SignalProcessing.Resampling.SamplingRate', 'SignalProcessing.FIRFilter.Frequencies', ...
                 'SignalProcessing.FIRFilter.Type', 'SignalProcessing.EpochExtraction', '', ...
                 'Prediction.FeatureExtraction.PatternPairs', '', 'Prediction.MachineLearning.Learner'};
@@ -205,7 +210,7 @@ classdef ParadigmCSP < ParadigmDataflowSimplified
         
         function tf = needs_voting(self)
             % standard CSP requires voting to handle more than 2 classes
-            tf = true; 
+            tf = true;
         end
         
     end
