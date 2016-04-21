@@ -141,7 +141,7 @@ classdef ParadigmSpecCSP < ParadigmDataflowSimplified
                     %                     spec_f_temp = zeros(C,nfft,T);
                     %                     for cc=1:C
                     %
-                    %                         spec_f_temp(cc,:,:) = periodogram(squeeze(X{c}.data(cc,:,:)),[],nfft,'twosided');
+                    %                     spec_f_temp(cc,:,:) = periodogram(squeeze(X{c}.data(cc,:,:)),[],nfft,'twosided');
                     %                     end
                     %                     spec_f = spec_f_temp(:,findx,:);
                     %                     spec_f = squeeze(mean(spec_f, 3));

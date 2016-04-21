@@ -234,10 +234,14 @@ switch variant.arg_selection
         end
         % run
         foldid = 1+floor((0:length(targets)-1)/length(targets)*variant.nfolds);
-        model.CVerr = cvglmnetMulticlass(double(trials),double(targets),variant.nfolds,variant.foldmargin,foldid,'response',family,glmnetSet(glmopts),variant.verbose,variant.customloss);
+        %model.CVerr = cvglmnetMulticlass(double(trials),double(targets),variant.nfolds,variant.foldmargin,foldid,'response',family,glmnetSet(glmopts),true,variant.customloss);
+        %model.CVerr = cvglmnetMulticlass(double(trials),double(targets),variant.nfolds,variant.foldmargin,foldid,'response',family,glmnetSet(glmopts),variant.verbose,variant.customloss);
+        model.CVerr = cvglmnet(double(trials),double(targets),family,[],[],variant.nfolds,foldid);
+        cvglmnetPlot(model.CVerr);
         try
             % assign reasonable weights for visualization
             model.w = model.CVerr.glmnet_object.beta{2}(:,model.CVerr.glmnet_object.lambda == model.CVerr.lambda_min);
+            %model.w = model.CVerr.glmnet_fit.beta{2}(:,model.CVerr.glmnet_fit.lambda == model.CVerr.lambda_min);
         catch
             disp_once('ml_trainlogreg: Could not assign weights for visualization.');
         end

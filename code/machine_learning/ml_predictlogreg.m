@@ -46,7 +46,9 @@ else
                 pred = probs;
             end
         case 'lars'
-            probs = real(glmnetPredict(model.CVerr.glmnet_object,'response',double(trials),model.CVerr.lambda_min));
+            probs = real(glmnetPredict(model.CVerr.glmnet_fit,double(trials),model.CVerr.lambda_min,'response'));
+             %probs = real(glmnetPredict(model.CVerr.glmnet_object,'response',double(trials),model.CVerr.lambda_min));
+
             if ~model.continuous_targets
                 pred = {'disc', probs, model.classes};
             else
