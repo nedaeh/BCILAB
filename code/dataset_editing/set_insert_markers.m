@@ -236,7 +236,8 @@ switch opts.segmentspec.arg_selection
         % for each potential interval start...
         for k=1:length(starts)-1
             valid = true;
-            % the range of event indices from start marker to next end marker
+            % the range of event indices from start marker to next end marker prior to the
+            % subsequent start marker
             scan_range = starts(k) : starts(k) + find(ends(starts(k)+1:starts(k+1)-1),1);
             if length(scan_range) >= 2
                 % the range excluding the start and end marker
@@ -267,12 +268,16 @@ end
 % sort the events by latency...
 newsignal.event = newsignal.event(hlp_getresult(2,@sort,[newsignal.event.latency]));
 
-% update .urevent field if trivial
-if isempty(newsignal.urevent) || isequal([newsignal.event.urevent],1:length(newsignal.event))
-    newsignal.urevent = newsignal.event;
-    [newsignal.event.urevent] = arraydeal(1:length(newsignal.event));
+try
+    % update .urevent field if trivial
+    if isempty(newsignal.urevent) || isequal([newsignal.event.urevent],1:length(newsignal.event))
+        newsignal.urevent = newsignal.event;
+        [newsignal.event.urevent] = arraydeal(1:length(newsignal.event));
+    end
+catch e
+    hlp_handleerror(['Could not update .urevent field, skipping... (' e.message ')']);
 end
-
+    
 % conclude randomization
 if strcmp(opts.placement,'random') && opts.repeatable && hlp_matlab_version < 707
     % restore saved RNG state
@@ -292,7 +297,7 @@ if length(ival) == 2 && ival(1) <= ival(2)
     % check the segment length
     seg_length = coverage/signal.srate;
     if seg_length < opts.minlen || seg_length > opts.maxlen
-        exp_endfun; return; end
+        return; end
     % hande the spacing method
     if strcmp(opts.counting,'persecond')
         opts.count = max(1,round(opts.count*(ival(2)-ival(1))/signal.srate)); end
